@@ -1,0 +1,9 @@
+{
+  "appId": "com.radio.tulis",
+  "appName": "Tulis",
+  "webDir": "www",
+  "bundledWebRuntime": false,
+  "android": {
+    "allowMixedContent": true
+  }
+}
