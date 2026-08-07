@@ -137,15 +137,106 @@
   /* Canvas / page */
   #canvasWrap{
     flex:1;
+    overflow-x:auto;
     overflow-y:auto;
-    padding:18px 10px 60px;
+    padding:0 10px 60px;
     -webkit-overflow-scrolling:touch;
+    touch-action:pan-x pan-y;
+  }
+  #canvasInner{
+    padding-top:4px;
+    width:max-content;
+    margin:0 auto;
+  }
+  #zoomStage{
+    /* 'zoom' (Chromium/WebView) genuinely rescales layout, unlike
+       transform:scale(), so sticky rulers & scrolling stay correct.
+       This app targets Android WebView (Chromium), where it's supported. */
+    width:max-content;
+  }
+  #docGrid{
+    display:grid;
+    grid-template-columns:22px max-content;
+    grid-template-rows:22px max-content;
+  }
+  #cornerBox{
+    grid-column:1; grid-row:1;
+    position:sticky; top:0; left:0; z-index:7;
+    width:22px; height:22px;
+    background:#fbfbfb;
+    border-right:1px solid #d4d4d4;
+    border-bottom:1px solid #d4d4d4;
+  }
+  #rulerWrap{
+    grid-column:2; grid-row:1;
+    position:sticky;
+    top:0;
+    z-index:5;
+    height:22px;
+    background:#fbfbfb;
+    border-bottom:1px solid #d4d4d4;
+    box-shadow:0 1px 2px rgba(0,0,0,0.06);
+  }
+  #vRulerWrap{
+    grid-column:1; grid-row:2;
+    position:sticky;
+    left:0;
+    z-index:5;
+    width:22px;
+    background:#fbfbfb;
+    border-right:1px solid #d4d4d4;
+    box-shadow:1px 0 2px rgba(0,0,0,0.06);
+  }
+  #pageCell{
+    grid-column:2; grid-row:2;
+  }
+  .ruler-margin{
+    position:absolute;
+    top:0; bottom:0;
+    background:#d9d9d9;
+  }
+  .ruler-margin-v{
+    position:absolute;
+    left:0; right:0;
+    background:#d9d9d9;
+  }
+  .ruler-tick{
+    position:absolute;
+    bottom:0;
+    width:1px;
+    background:#999;
+  }
+  .ruler-tick.major{height:9px; background:#777;}
+  .ruler-tick.minor{height:5px;}
+  .ruler-tick-v{
+    position:absolute;
+    right:0;
+    height:1px;
+    background:#999;
+  }
+  .ruler-tick-v.major{width:9px; background:#777;}
+  .ruler-tick-v.minor{width:5px;}
+  .ruler-num{
+    position:absolute;
+    top:1px;
+    font-size:9px;
+    color:#555;
+    transform:translateX(-50%);
+    font-family:Arial,sans-serif;
+  }
+  .ruler-num-v{
+    position:absolute;
+    left:1px;
+    font-size:9px;
+    color:#555;
+    transform:translateY(-50%);
+    font-family:Arial,sans-serif;
+    writing-mode:vertical-rl;
   }
   #page{
     background:var(--page-bg);
     max-width:800px;
     min-height:1100px;
-    margin:0 auto;
     padding:56px 48px;
     box-shadow:0 1px 4px rgba(0,0,0,0.15), 0 0 1px rgba(0,0,0,0.2);
     font-size:16px;
@@ -167,8 +258,27 @@
     font-size:11px;
     padding:4px 12px;
     display:flex;
+    align-items:center;
     justify-content:space-between;
+    gap:8px;
   }
+  #zoomControl{
+    display:flex;
+    align-items:center;
+    gap:4px;
+  }
+  #zoomControl button{
+    background:rgba(255,255,255,0.18);
+    border:none;
+    color:#fff;
+    width:18px; height:18px;
+    border-radius:3px;
+    font-size:12px;
+    line-height:1;
+    display:flex; align-items:center; justify-content:center;
+  }
+  #zoomControl button:active{background:rgba(255,255,255,0.35);}
+  #zoomLevel{min-width:32px; text-align:center;}
 
   /* File menu overlay */
   #fileMenu{
@@ -205,6 +315,47 @@
   #toast.show{opacity:1;}
 
   #fileInput{display:none;}
+
+  /* Print preview modal */
+  #previewOverlay{
+    position:fixed; inset:0; background:#5a5a5a;
+    display:none; flex-direction:column; z-index:80;
+  }
+  #previewOverlay.open{display:flex;}
+  #previewTopbar{
+    flex-shrink:0; background:var(--accent-dark); color:#fff;
+    display:flex; align-items:center; gap:10px; padding:8px 12px;
+  }
+  #previewTitle{flex:1; font-size:14px; font-weight:600;}
+  #previewBody{
+    flex:1; overflow-y:auto; padding:20px 10px 40px;
+  }
+  .preview-page-label{
+    text-align:center; color:#ddd; font-size:11px; margin:0 0 6px;
+  }
+  .preview-sheet{
+    background:#fff;
+    margin:0 auto 22px;
+    box-shadow:0 2px 8px rgba(0,0,0,0.4);
+    overflow:hidden;
+    position:relative;
+  }
+  .preview-sheet-inner{
+    position:absolute; top:0; left:0;
+  }
+
+  @media print{
+    #titlebar, #ribbon-tabs, #ribbon, #statusbar, #fileMenu, #toast, #previewTopbar, #rulerWrap, #vRulerWrap, #cornerBox{
+      display:none !important;
+    }
+    #canvasWrap{ padding:0 !important; overflow:visible !important; }
+    #page{
+      box-shadow:none !important;
+      max-width:none !important;
+      margin:0 !important;
+    }
+    #previewOverlay{ display:none !important; }
+  }
 </style>
 </head>
 <body>
@@ -213,6 +364,7 @@
   <div id="titlebar">
     <button class="titlebar-btn" id="menuBtn" title="Menu">&#9776;</button>
     <input id="docTitle" value="Dokumen Tanpa Judul" spellcheck="false">
+    <button class="titlebar-btn" id="previewQuickBtn" title="Pratinjau Cetak">&#128065;&#65039;</button>
     <button class="titlebar-btn" id="saveBtn" title="Simpan">&#128190;</button>
   </div>
 
@@ -296,6 +448,21 @@
     <div id="ribbonLayout" style="display:none;">
       <span class="ribbon-group">
         <span class="ribbon-row">
+          <select class="rsel" id="paperSize">
+            <option value="A4" selected>A4 (21 x 29,7 cm)</option>
+            <option value="Letter">Letter (21,6 x 27,9 cm)</option>
+            <option value="Legal">Legal (21,6 x 35,6 cm)</option>
+            <option value="F4">F4 / Folio (21,5 x 33 cm)</option>
+          </select>
+          <select class="rsel" id="orientation">
+            <option value="portrait" selected>Potret</option>
+            <option value="landscape">Lanskap</option>
+          </select>
+        </span>
+        <span class="ribbon-label">Ukuran Kertas</span>
+      </span>
+      <span class="ribbon-group">
+        <span class="ribbon-row">
           <select class="rsel" id="lineSpacing">
             <option value="1">1.0</option>
             <option value="1.15" selected>1.15</option>
@@ -311,15 +478,38 @@
         </span>
         <span class="ribbon-label">Format</span>
       </span>
+      <span class="ribbon-group">
+        <span class="ribbon-row">
+          <button class="rbtn wide" id="printPreviewBtn">&#128065;&#65039; Pratinjau</button>
+          <button class="rbtn wide" id="printBtn">&#128424;&#65039; Cetak</button>
+        </span>
+        <span class="ribbon-label">Cetak</span>
+      </span>
     </div>
   </div>
 
   <div id="canvasWrap">
-    <div id="page" contenteditable="true" data-placeholder="Mulai menulis di sini..." spellcheck="true"></div>
+    <div id="canvasInner">
+      <div id="zoomStage">
+        <div id="docGrid">
+          <div id="cornerBox"></div>
+          <div id="rulerWrap"></div>
+          <div id="vRulerWrap"></div>
+          <div id="pageCell">
+            <div id="page" contenteditable="true" data-placeholder="Mulai menulis di sini..." spellcheck="true"></div>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <div id="statusbar">
     <span id="wordCount">0 kata</span>
+    <span id="zoomControl">
+      <button id="zoomOutBtn" title="Perkecil">&#8722;</button>
+      <span id="zoomLevel">100%</span>
+      <button id="zoomInBtn" title="Perbesar">+</button>
+    </span>
     <span id="saveStatus">Belum disimpan</span>
   </div>
 </div>
@@ -331,6 +521,15 @@
     <div class="fileMenuItem" id="saveDocItem"><span class="ico">&#128190;</span> Simpan</div>
     <div class="fileMenuItem" id="exportTxtItem"><span class="ico">&#128441;&#65039;</span> Ekspor sebagai .txt</div>
   </div>
+</div>
+
+<div id="previewOverlay">
+  <div id="previewTopbar">
+    <button class="titlebar-btn" id="previewCloseBtn" title="Tutup">&#10005;</button>
+    <span id="previewTitle">Pratinjau Cetak</span>
+    <button class="titlebar-btn" id="previewPrintBtn" title="Cetak">&#128424;&#65039;</button>
+  </div>
+  <div id="previewBody"></div>
 </div>
 
 <input type="file" id="fileInput" accept=".doc,.html,.txt">
@@ -349,6 +548,142 @@
   const STORAGE_DIR = ''; // root of app's data dir
   let currentFileName = 'dokumen-tanpa-judul.doc';
   let dirty = false;
+
+  // ---------- Paper size ----------
+  const MM_TO_PX = 96 / 25.4;
+  const MARGIN_MM = 25;
+  const PAPERS = {
+    A4:     { w: 210,   h: 297   },
+    Letter: { w: 215.9, h: 279.4 },
+    Legal:  { w: 215.9, h: 355.6 },
+    F4:     { w: 215,   h: 330   }
+  };
+  let currentPaper = 'A4';
+  let currentOrientation = 'portrait';
+
+  function getPaperDims(){
+    const p = PAPERS[currentPaper] || PAPERS.A4;
+    return currentOrientation === 'landscape'
+      ? { w: p.h, h: p.w }
+      : { w: p.w, h: p.h };
+  }
+
+  function applyPaperSize(){
+    const dims = getPaperDims();
+    const wPx = Math.round(dims.w * MM_TO_PX);
+    const hPx = Math.round(dims.h * MM_TO_PX);
+    const marginPx = Math.round(MARGIN_MM * MM_TO_PX);
+    page.style.maxWidth = wPx + 'px';
+    page.style.width = wPx + 'px';
+    page.style.minHeight = hPx + 'px';
+    page.style.padding = marginPx + 'px';
+
+    let styleTag = document.getElementById('pagesizeStyle');
+    if(!styleTag){
+      styleTag = document.createElement('style');
+      styleTag.id = 'pagesizeStyle';
+      document.head.appendChild(styleTag);
+    }
+    styleTag.textContent = '@page{ size:' + dims.w + 'mm ' + dims.h + 'mm; margin:0; }';
+
+    buildRuler(wPx, marginPx);
+    buildVRuler(hPx, marginPx);
+  }
+
+  // ---------- Ruler ----------
+  const PX_PER_CM = MM_TO_PX * 10;
+  function buildRuler(wPx, marginPx){
+    const rulerWrap = document.getElementById('rulerWrap');
+    rulerWrap.style.width = wPx + 'px';
+    rulerWrap.innerHTML = '';
+
+    const leftMargin = document.createElement('div');
+    leftMargin.className = 'ruler-margin';
+    leftMargin.style.left = '0';
+    leftMargin.style.width = marginPx + 'px';
+    rulerWrap.appendChild(leftMargin);
+
+    const rightMargin = document.createElement('div');
+    rightMargin.className = 'ruler-margin';
+    rightMargin.style.right = '0';
+    rightMargin.style.width = marginPx + 'px';
+    rulerWrap.appendChild(rightMargin);
+
+    // Ticks span the whole page width; numbering restarts at 0 from the
+    // left margin (matching Word's ruler), counting up in cm.
+    const totalCm = wPx / PX_PER_CM;
+    const startCm = -Math.floor(marginPx / PX_PER_CM) - 1;
+    const endCm = Math.ceil((wPx - marginPx) / PX_PER_CM) + 1;
+    for(let cm = startCm; cm <= endCm; cm++){
+      const x = marginPx + cm * PX_PER_CM;
+      if(x < 0 || x > wPx) continue;
+
+      const major = document.createElement('div');
+      major.className = 'ruler-tick major';
+      major.style.left = x + 'px';
+      rulerWrap.appendChild(major);
+
+      if(cm !== 0){
+        const num = document.createElement('div');
+        num.className = 'ruler-num';
+        num.style.left = x + 'px';
+        num.textContent = Math.abs(cm);
+        rulerWrap.appendChild(num);
+      }
+
+      if(cm < endCm){
+        const half = document.createElement('div');
+        half.className = 'ruler-tick minor';
+        half.style.left = (x + PX_PER_CM/2) + 'px';
+        rulerWrap.appendChild(half);
+      }
+    }
+  }
+
+  function buildVRuler(hPx, marginPx){
+    const vRulerWrap = document.getElementById('vRulerWrap');
+    vRulerWrap.style.height = hPx + 'px';
+    vRulerWrap.innerHTML = '';
+
+    const topMargin = document.createElement('div');
+    topMargin.className = 'ruler-margin-v';
+    topMargin.style.top = '0';
+    topMargin.style.height = marginPx + 'px';
+    vRulerWrap.appendChild(topMargin);
+
+    const bottomMargin = document.createElement('div');
+    bottomMargin.className = 'ruler-margin-v';
+    bottomMargin.style.bottom = '0';
+    bottomMargin.style.height = marginPx + 'px';
+    vRulerWrap.appendChild(bottomMargin);
+
+    const startCm = -Math.floor(marginPx / PX_PER_CM) - 1;
+    const endCm = Math.ceil((hPx - marginPx) / PX_PER_CM) + 1;
+    for(let cm = startCm; cm <= endCm; cm++){
+      const y = marginPx + cm * PX_PER_CM;
+      if(y < 0 || y > hPx) continue;
+
+      const major = document.createElement('div');
+      major.className = 'ruler-tick-v major';
+      major.style.top = y + 'px';
+      vRulerWrap.appendChild(major);
+
+      if(cm !== 0){
+        const num = document.createElement('div');
+        num.className = 'ruler-num-v';
+        num.style.top = y + 'px';
+        num.textContent = Math.abs(cm);
+        vRulerWrap.appendChild(num);
+      }
+
+      if(cm < endCm){
+        const half = document.createElement('div');
+        half.className = 'ruler-tick-v minor';
+        half.style.top = (y + PX_PER_CM/2) + 'px';
+        vRulerWrap.appendChild(half);
+      }
+    }
+  }
 
   function toast(msg){
     toastEl.textContent = msg;
@@ -416,6 +751,87 @@
     page.focus();
     document.execCommand('removeFormat', false, null);
     markDirty();
+  });
+
+  // ---------- Paper size / orientation ----------
+  document.getElementById('paperSize').addEventListener('change', e=>{
+    currentPaper = e.target.value;
+    applyPaperSize();
+    markDirty();
+  });
+  document.getElementById('orientation').addEventListener('change', e=>{
+    currentOrientation = e.target.value;
+    applyPaperSize();
+    markDirty();
+  });
+  applyPaperSize();
+
+  // ---------- Print preview ----------
+  const previewOverlay = document.getElementById('previewOverlay');
+  const previewBody = document.getElementById('previewBody');
+
+  function buildPreview(){
+    previewBody.innerHTML = '';
+    const dims = getPaperDims();
+    const wPx = Math.round(dims.w * MM_TO_PX);
+    const hPx = Math.round(dims.h * MM_TO_PX);
+    const marginPx = Math.round(MARGIN_MM * MM_TO_PX);
+
+    // Measure real content height by cloning it into an offscreen sheet
+    // of the correct width, then split into page-height windows.
+    const measurer = document.createElement('div');
+    measurer.style.cssText = 'position:absolute; visibility:hidden; pointer-events:none; top:-99999px; left:-99999px;' +
+      'width:' + wPx + 'px; padding:' + marginPx + 'px; box-sizing:border-box;' +
+      'font-size:16px; line-height:' + (page.style.lineHeight || '1.6') + ';';
+    measurer.innerHTML = page.innerHTML;
+    document.body.appendChild(measurer);
+    const totalHeight = Math.max(measurer.offsetHeight, hPx);
+    document.body.removeChild(measurer);
+
+    const pageCount = Math.max(1, Math.ceil(totalHeight / hPx));
+
+    for(let i=0; i<pageCount; i++){
+      const label = document.createElement('div');
+      label.className = 'preview-page-label';
+      label.textContent = 'Halaman ' + (i+1) + ' dari ' + pageCount + ' \u00b7 ' + currentPaper + (currentOrientation==='landscape' ? ' (Lanskap)' : '');
+      previewBody.appendChild(label);
+
+      const sheet = document.createElement('div');
+      sheet.className = 'preview-sheet';
+      sheet.style.width = wPx + 'px';
+      sheet.style.height = hPx + 'px';
+
+      const inner = document.createElement('div');
+      inner.className = 'preview-sheet-inner';
+      inner.style.width = wPx + 'px';
+      inner.style.padding = marginPx + 'px';
+      inner.style.boxSizing = 'border-box';
+      inner.style.fontSize = '16px';
+      inner.style.lineHeight = page.style.lineHeight || '1.6';
+      inner.style.top = (-i * hPx) + 'px';
+      inner.innerHTML = page.innerHTML;
+
+      sheet.appendChild(inner);
+      previewBody.appendChild(sheet);
+    }
+  }
+
+  function openPreview(){
+    buildPreview();
+    previewOverlay.classList.add('open');
+  }
+  function closePreview(){
+    previewOverlay.classList.remove('open');
+  }
+
+  document.getElementById('printPreviewBtn').addEventListener('click', openPreview);
+  document.getElementById('previewQuickBtn').addEventListener('click', openPreview);
+  document.getElementById('previewCloseBtn').addEventListener('click', closePreview);
+  document.getElementById('previewPrintBtn').addEventListener('click', ()=>{
+    window.print();
+  });
+  document.getElementById('printBtn').addEventListener('click', ()=>{
+    window.print();
   });
   document.getElementById('insertHrBtn').addEventListener('click', ()=>{
     page.focus();
@@ -630,6 +1046,66 @@
   window.addEventListener('beforeunload', (e)=>{
     if(dirty){ e.preventDefault(); e.returnValue=''; }
   });
+
+  // ---------- Zoom (pinch-to-zoom + status bar controls) ----------
+  const zoomStage = document.getElementById('zoomStage');
+  const zoomLevelEl = document.getElementById('zoomLevel');
+  const canvasWrap = document.getElementById('canvasWrap');
+  const ZOOM_MIN = 0.5, ZOOM_MAX = 3;
+  let zoom = 1;
+
+  function applyZoom(z, focus){
+    z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+    // Keep the point under the pinch/focus roughly stationary while scaling.
+    let ratio = 1;
+    if(zoom) ratio = z / zoom;
+    zoom = z;
+    zoomStage.style.zoom = zoom; // Chromium/Android WebView: real layout rescale
+    zoomLevelEl.textContent = Math.round(zoom * 100) + '%';
+    if(focus && ratio !== 1){
+      canvasWrap.scrollLeft = (canvasWrap.scrollLeft + focus.x) * ratio - focus.x;
+      canvasWrap.scrollTop = (canvasWrap.scrollTop + focus.y) * ratio - focus.y;
+    }
+  }
+
+  document.getElementById('zoomInBtn').addEventListener('click', ()=> applyZoom(zoom + 0.1));
+  document.getElementById('zoomOutBtn').addEventListener('click', ()=> applyZoom(zoom - 0.1));
+
+  // Two-finger pinch
+  let pinchStartDist = null;
+  let pinchStartZoom = 1;
+  function touchDist(t0, t1){
+    const dx = t0.clientX - t1.clientX, dy = t0.clientY - t1.clientY;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+  canvasWrap.addEventListener('touchstart', (e)=>{
+    if(e.touches.length === 2){
+      pinchStartDist = touchDist(e.touches[0], e.touches[1]);
+      pinchStartZoom = zoom;
+    }
+  }, {passive:true});
+  canvasWrap.addEventListener('touchmove', (e)=>{
+    if(e.touches.length === 2 && pinchStartDist){
+      e.preventDefault();
+      const dist = touchDist(e.touches[0], e.touches[1]);
+      const rect = canvasWrap.getBoundingClientRect();
+      const midX = (e.touches[0].clientX + e.touches[1].clientX) / 2 - rect.left;
+      const midY = (e.touches[0].clientY + e.touches[1].clientY) / 2 - rect.top;
+      applyZoom(pinchStartZoom * (dist / pinchStartDist), {x: midX, y: midY});
+    }
+  }, {passive:false});
+  canvasWrap.addEventListener('touchend', (e)=>{
+    if(e.touches.length < 2) pinchStartDist = null;
+  });
+
+  // Desktop convenience: Ctrl/Cmd + wheel to zoom
+  canvasWrap.addEventListener('wheel', (e)=>{
+    if(e.ctrlKey || e.metaKey){
+      e.preventDefault();
+      const rect = canvasWrap.getBoundingClientRect();
+      applyZoom(zoom - e.deltaY * 0.001, {x: e.clientX - rect.left, y: e.clientY - rect.top});
+    }
+  }, {passive:false});
 
   updateWordCount();
 })();
