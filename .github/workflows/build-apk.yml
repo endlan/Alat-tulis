@@ -3,6 +3,8 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -25,6 +27,26 @@ jobs:
           mkdir -p www/capacitor-plugins
           cp node_modules/@capacitor/filesystem/dist/plugin.js www/capacitor-plugins/filesystem.js
           ls -la www/capacitor-plugins
+      - name: Ensure persistent debug keystore exists (generate once, reuse forever)
+        run: |
+          mkdir -p ci-keystore
+          if [ ! -f ci-keystore/debug.keystore ]; then
+            echo "Belum ada keystore, generate baru..."
+            keytool -genkeypair -v \
+              -keystore ci-keystore/debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add ci-keystore/debug.keystore
+            git commit -m "chore: generate persistent debug keystore [skip ci]"
+            git push
+          else
+            echo "Keystore sudah ada di repo, dipakai ulang (sertifikat tetap sama)."
+          fi
       - name: Add or sync Android platform
         run: |
           if [ ! -d "android" ]; then
@@ -39,11 +61,8 @@ jobs:
           else
             echo "Lewati: resources/icon.png belum ada, pakai ikon default Capacitor."
           fi
-      - name: Restore debug keystore
-        run: |
-          mkdir -p ~/.android
-          echo "${{ secrets.DEBUG_KEYSTORE_BASE64 }}" | base64 -d > ~/.android/debug.keystore
-          cp ~/.android/debug.keystore android/app/debug.keystore
+      - name: Put debug keystore in place
+        run: cp ci-keystore/debug.keystore android/app/debug.keystore
       - name: Force explicit debug signing config
         run: |
           cat >> android/app/build.gradle << 'EOF'
@@ -66,7 +85,7 @@ jobs:
           EOF
           cat android/app/build.gradle
       - name: Print keystore fingerprint (debug check)
-        run: keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey | grep SHA1
+        run: keytool -list -v -keystore ci-keystore/debug.keystore -storepass android -alias androiddebugkey | grep SHA1
       - name: Build debug APK
         run: |
           cd android
