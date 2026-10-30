@@ -189,6 +189,21 @@
   }
   #pageCell{
     grid-column:2; grid-row:2;
+    position:relative;
+  }
+  /* Penanda batas halaman di editor (tidak ikut tersimpan/tercetak) */
+  #pbLayer{
+    position:absolute; top:0; left:0; right:0; bottom:0;
+    pointer-events:none; z-index:5; overflow:hidden;
+  }
+  .pb-line{
+    position:absolute; left:0; right:0; height:0;
+    border-top:2px dashed #4a90d9;
+  }
+  .pb-line span{
+    position:absolute; right:8px; top:3px;
+    font:600 10px Arial,sans-serif; color:#fff; background:#4a90d9;
+    padding:1px 6px; border-radius:8px;
   }
   .ruler-margin{
     position:absolute;
@@ -234,21 +249,32 @@
     writing-mode:vertical-rl;
   }
   #page{
+    position:relative;
     background:var(--page-bg);
     max-width:800px;
     min-height:1100px;
     padding:56px 48px;
     box-shadow:0 1px 4px rgba(0,0,0,0.15), 0 0 1px rgba(0,0,0,0.2);
+    outline:none;
+  }
+  /* Gaya isi dokumen dipakai bersama oleh editor dan pratinjau cetak */
+  #page, .doc-content{
     font-size:16px;
     line-height:1.6;
-    outline:none;
     color:#1a1a1a;
+    overflow-wrap:anywhere;
   }
-  #page:empty:before{
+  #page p, .doc-content p{margin:0 0 10px;}
+  #page img, .doc-content img{max-width:100%; height:auto;}
+  #page table, .doc-content table{max-width:100%;}
+  #page.is-empty:before{
     content:attr(data-placeholder);
+    position:absolute;
+    top:var(--page-pad, 56px);
+    left:var(--page-pad, 56px);
     color:#a0a0a0;
+    pointer-events:none;
   }
-  #page p{margin:0 0 10px;}
 
   /* Status bar */
   #statusbar{
@@ -345,16 +371,27 @@
   }
 
   @media print{
+    *{-webkit-print-color-adjust:exact; print-color-adjust:exact;}
+    html, body, #app{height:auto !important; overflow:visible !important; display:block !important;}
     #titlebar, #ribbon-tabs, #ribbon, #statusbar, #fileMenu, #toast, #previewTopbar, #rulerWrap, #vRulerWrap, #cornerBox{
       display:none !important;
     }
     #canvasWrap{ padding:0 !important; overflow:visible !important; }
+    #canvasInner, #zoomStage{ width:auto !important; margin:0 !important; padding:0 !important; zoom:1 !important; }
+    #docGrid{ display:block !important; }
     #page{
       box-shadow:none !important;
+      width:auto !important;
       max-width:none !important;
+      min-height:0 !important;
       margin:0 !important;
+      padding:0 !important;
     }
+    #page:before{ display:none !important; }
+    #page tr{ break-inside:avoid; }
+    #page p{ orphans:2; widows:2; }
     #previewOverlay{ display:none !important; }
+    #pbLayer{ display:none !important; }
   }
 </style>
 </head>
@@ -577,6 +614,7 @@
     page.style.width = wPx + 'px';
     page.style.minHeight = hPx + 'px';
     page.style.padding = marginPx + 'px';
+    page.style.setProperty('--page-pad', marginPx + 'px');
 
     let styleTag = document.getElementById('pagesizeStyle');
     if(!styleTag){
@@ -584,7 +622,7 @@
       styleTag.id = 'pagesizeStyle';
       document.head.appendChild(styleTag);
     }
-    styleTag.textContent = '@page{ size:' + dims.w + 'mm ' + dims.h + 'mm; margin:0; }';
+    styleTag.textContent = '@page{ size:' + dims.w + 'mm ' + dims.h + 'mm; margin:' + MARGIN_MM + 'mm; }';
 
     buildRuler(wPx, marginPx);
     buildVRuler(hPx, marginPx);
@@ -702,66 +740,173 @@
   }
 
   function updateWordCount(){
-    const text = page.innerText.trim();
+    const text = page.innerText.replace(/​/g, '').trim();
     const words = text.length ? text.split(/\s+/).length : 0;
     wordCount.textContent = words + ' kata';
   }
+  let wordCountTimer = null;
+  function scheduleWordCount(){
+    clearTimeout(wordCountTimer);
+    wordCountTimer = setTimeout(updateWordCount, 300);
+  }
+
+  // ---------- Placeholder & paragraf dasar ----------
+  function updatePlaceholder(){
+    const empty = page.textContent.replace(/​/g, '').trim() === '' &&
+                  !page.querySelector('img, table, hr, ul, ol');
+    page.classList.toggle('is-empty', empty);
+  }
+  function placeCaretAtStart(el){
+    const sel = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    range.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  }
+  function ensureParagraph(){
+    const html = page.innerHTML.trim();
+    if(html === '' || html === '<br>'){
+      page.innerHTML = '<p><br></p>';
+      if(document.activeElement === page) placeCaretAtStart(page.firstChild);
+    }
+    updatePlaceholder();
+  }
+
+  // ---------- Pembersihan HTML (buka file, tempel, pulihkan cadangan) ----------
+  const UNSAFE_TAGS = 'script, style, iframe, object, embed, link, meta, base, form, input, button, textarea, select, frame, frameset, applet, noscript, template, svg, math, audio, video, source, title';
+  function sanitizeHTML(html){
+    const doc = new DOMParser().parseFromString(String(html), 'text/html');
+    doc.querySelectorAll(UNSAFE_TAGS).forEach(n => n.remove());
+    doc.body.querySelectorAll('*').forEach(el=>{
+      Array.from(el.attributes).forEach(attr=>{
+        const name = attr.name.toLowerCase();
+        const val = attr.value.replace(/[\u0000- ]/g, '').toLowerCase();
+        if(name.indexOf('on') === 0 || name === 'srcdoc' || name === 'formaction' || name === 'id' || name === 'class'){
+          el.removeAttribute(attr.name);
+        } else if((name === 'href' || name === 'src' || name === 'xlink:href') && /^(javascript:|vbscript:|data:text\/html)/.test(val)){
+          el.removeAttribute(attr.name);
+        } else if(name === 'style' && /expression\(|javascript:|@import|behavior:/.test(val)){
+          el.removeAttribute(attr.name);
+        }
+      });
+    });
+    return doc.body.innerHTML;
+  }
+  function escapeHTML(s){
+    return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+  function textToHTML(text){
+    return String(text).replace(/\r\n?/g, '\n').split('\n')
+      .map(line => line.trim() ? '<p>' + escapeHTML(line) + '</p>' : '<p><br></p>')
+      .join('');
+  }
+
+  // ---------- Simpan & pulihkan seleksi ----------
+  let savedRange = null;
+  function selectionInPage(){
+    const sel = window.getSelection();
+    return !!(sel && sel.rangeCount && page.contains(sel.anchorNode));
+  }
+  function saveSelection(){
+    if(selectionInPage()) savedRange = window.getSelection().getRangeAt(0).cloneRange();
+  }
+  function restoreSelection(){
+    page.focus({preventScroll:true});
+    if(savedRange && page.contains(savedRange.commonAncestorContainer)){
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(savedRange);
+    }
+  }
 
   // ---------- Toolbar formatting ----------
+  // Tombol toolbar tidak boleh mencuri fokus dari editor (seleksi tetap utuh di HP)
+  document.getElementById('ribbon').addEventListener('mousedown', e=>{
+    if(e.target.closest('button')) e.preventDefault();
+  });
+  try{ document.execCommand('defaultParagraphSeparator', false, 'p'); }catch(e){}
+
+  function runCommand(cmd, value){
+    restoreSelection();
+    document.execCommand(cmd, false, value === undefined ? null : value);
+    saveSelection();
+    markDirty();
+    scheduleAutoSave();
+  }
+
   document.querySelectorAll('.rbtn[data-cmd]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
-      page.focus();
-      document.execCommand(btn.dataset.cmd, false, null);
-      markDirty();
+      runCommand(btn.dataset.cmd);
       refreshActiveStates();
     });
   });
 
   document.getElementById('fontFamily').addEventListener('change', e=>{
-    page.focus();
-    document.execCommand('fontName', false, e.target.value);
-    markDirty();
+    runCommand('fontName', e.target.value);
   });
+
+  function applyFontSize(pt){
+    restoreSelection();
+    const sel = window.getSelection();
+    if(!sel.rangeCount) return;
+    const range = sel.getRangeAt(0);
+    if(range.collapsed){
+      // Tanpa teks terpilih: ukuran berlaku untuk teks yang diketik berikutnya
+      const span = document.createElement('span');
+      span.style.fontSize = pt + 'pt';
+      span.textContent = '​';
+      range.insertNode(span);
+      const r = document.createRange();
+      r.setStart(span.firstChild, 1);
+      r.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(r);
+    } else {
+      // execCommand fontSize hanya mengenal 1-7: pakai 7 lalu ubah ke ukuran pt yang diminta
+      document.execCommand('styleWithCSS', false, false);
+      document.execCommand('fontSize', false, '7');
+      page.querySelectorAll('font[size="7"]').forEach(f=>{
+        f.removeAttribute('size');
+        f.style.fontSize = pt + 'pt';
+        // ukuran lama di dalam seleksi tidak boleh menimpa ukuran baru
+        f.querySelectorAll('[style*="font-size"]').forEach(inner=> inner.style.removeProperty('font-size'));
+      });
+    }
+    saveSelection();
+    markDirty();
+    scheduleAutoSave();
+  }
   document.getElementById('fontSize').addEventListener('change', e=>{
-    page.focus();
-    // execCommand fontSize only supports 1-7, so wrap manually
-    document.execCommand('styleWithCSS', false, true);
-    document.execCommand('fontSize', false, '7');
-    document.querySelectorAll('font[size="7"]').forEach(el=>{
-      el.removeAttribute('size');
-      el.style.fontSize = e.target.value + 'pt';
-    });
-    markDirty();
+    applyFontSize(parseInt(e.target.value, 10));
   });
+
   document.getElementById('textColor').addEventListener('input', e=>{
-    page.focus();
-    document.execCommand('foreColor', false, e.target.value);
-    markDirty();
+    runCommand('foreColor', e.target.value);
   });
   document.getElementById('highlightColor').addEventListener('input', e=>{
-    page.focus();
-    document.execCommand('hiliteColor', false, e.target.value);
-    markDirty();
+    runCommand('hiliteColor', e.target.value);
   });
   document.getElementById('lineSpacing').addEventListener('change', e=>{
     page.style.lineHeight = e.target.value;
     markDirty();
+    scheduleAutoSave();
   });
   document.getElementById('clearFormatBtn').addEventListener('click', ()=>{
-    page.focus();
-    document.execCommand('removeFormat', false, null);
-    markDirty();
+    runCommand('removeFormat');
   });
 
   // ---------- Paper size / orientation ----------
   document.getElementById('paperSize').addEventListener('change', e=>{
     currentPaper = e.target.value;
     applyPaperSize();
+    schedulePageBreaks();
     markDirty();
   });
   document.getElementById('orientation').addEventListener('change', e=>{
     currentOrientation = e.target.value;
     applyPaperSize();
+    schedulePageBreaks();
     markDirty();
   });
   applyPaperSize();
@@ -770,55 +915,154 @@
   const previewOverlay = document.getElementById('previewOverlay');
   const previewBody = document.getElementById('previewBody');
 
+  // Bungkus teks/elemen inline yang berdiri sendiri ke dalam <p> agar bisa dipotong per blok
+  function wrapLooseNodes(container){
+    const INLINE = /^(A|B|I|U|S|EM|STRONG|SPAN|FONT|SUB|SUP|SMALL|BIG|STRIKE|CODE|MARK|BR|IMG)$/;
+    let run = null;
+    Array.from(container.childNodes).forEach(node=>{
+      const isInline = node.nodeType === 3 || (node.nodeType === 1 && INLINE.test(node.nodeName));
+      if(!isInline){ run = null; return; }
+      if(!run){
+        if(node.nodeType === 3 && !node.nodeValue.trim()) return;
+        run = document.createElement('p');
+        container.insertBefore(run, node);
+      }
+      run.appendChild(node);
+    });
+  }
+
+  // Titik awal tiap halaman: pindah ke halaman baru di batas blok, bukan memotong di tengah blok
+  function computePageBreaks(measurer, contentH){
+    const starts = [0];
+    let pageStart = 0;
+    Array.from(measurer.children).forEach(el=>{
+      const top = el.offsetTop;
+      const bottom = top + el.offsetHeight;
+      if(bottom - pageStart > contentH && top > pageStart){
+        pageStart = top;
+        starts.push(pageStart);
+      }
+      // blok yang lebih tinggi dari satu halaman dipotong per tinggi halaman
+      while(bottom - pageStart > contentH){
+        pageStart += contentH;
+        starts.push(pageStart);
+      }
+    });
+    return starts;
+  }
+
   function buildPreview(){
     previewBody.innerHTML = '';
     const dims = getPaperDims();
     const wPx = Math.round(dims.w * MM_TO_PX);
     const hPx = Math.round(dims.h * MM_TO_PX);
     const marginPx = Math.round(MARGIN_MM * MM_TO_PX);
+    const contentW = wPx - 2 * marginPx;
+    const contentH = hPx - 2 * marginPx;
+    const lineHeight = page.style.lineHeight || '1.6';
 
-    // Measure real content height by cloning it into an offscreen sheet
-    // of the correct width, then split into page-height windows.
+    // Ukur isi dokumen di area tak terlihat dengan lebar area tulis yang sebenarnya
     const measurer = document.createElement('div');
+    measurer.className = 'doc-content';
     measurer.style.cssText = 'position:absolute; visibility:hidden; pointer-events:none; top:-99999px; left:-99999px;' +
-      'width:' + wPx + 'px; padding:' + marginPx + 'px; box-sizing:border-box;' +
-      'font-size:16px; line-height:' + (page.style.lineHeight || '1.6') + ';';
+      'width:' + contentW + 'px; line-height:' + lineHeight + ';';
     measurer.innerHTML = page.innerHTML;
+    wrapLooseNodes(measurer);
     document.body.appendChild(measurer);
-    const totalHeight = Math.max(measurer.offsetHeight, hPx);
+    const starts = computePageBreaks(measurer, contentH);
+    const totalHeight = measurer.offsetHeight;
+    const normalizedHTML = measurer.innerHTML;
     document.body.removeChild(measurer);
 
-    const pageCount = Math.max(1, Math.ceil(totalHeight / hPx));
+    // Kecilkan lembar agar muat di lebar layar HP
+    const avail = previewBody.clientWidth - 20;
+    const scale = (avail > 0) ? Math.min(1, avail / wPx) : 1;
 
-    for(let i=0; i<pageCount; i++){
+    for(let i = 0; i < starts.length; i++){
+      const start = starts[i];
+      const end = (i + 1 < starts.length) ? starts[i + 1] : totalHeight;
+      const sliceH = Math.max(1, Math.min(contentH, end - start));
+
       const label = document.createElement('div');
       label.className = 'preview-page-label';
-      label.textContent = 'Halaman ' + (i+1) + ' dari ' + pageCount + ' \u00b7 ' + currentPaper + (currentOrientation==='landscape' ? ' (Lanskap)' : '');
+      label.textContent = 'Halaman ' + (i + 1) + ' dari ' + starts.length + ' · ' + currentPaper + (currentOrientation === 'landscape' ? ' (Lanskap)' : '');
       previewBody.appendChild(label);
 
       const sheet = document.createElement('div');
       sheet.className = 'preview-sheet';
-      sheet.style.width = wPx + 'px';
-      sheet.style.height = hPx + 'px';
+      // Lembar diperkecil dengan transform (bukan zoom) agar tata letak teks tetap 1:1
+      // dan titik potong halaman tidak bergeser
+      sheet.style.width = Math.round(wPx * scale) + 'px';
+      sheet.style.height = Math.round(hPx * scale) + 'px';
+
+      const scaler = document.createElement('div');
+      scaler.style.cssText = 'position:absolute; top:0; left:0; width:' + wPx + 'px; height:' + hPx + 'px;' +
+        'transform-origin:0 0; transform:scale(' + scale + ');';
+
+      const win = document.createElement('div');
+      win.style.cssText = 'position:absolute; overflow:hidden; left:' + marginPx + 'px; top:' + marginPx + 'px;' +
+        'width:' + contentW + 'px; height:' + sliceH + 'px;';
 
       const inner = document.createElement('div');
-      inner.className = 'preview-sheet-inner';
-      inner.style.width = wPx + 'px';
-      inner.style.padding = marginPx + 'px';
-      inner.style.boxSizing = 'border-box';
-      inner.style.fontSize = '16px';
-      inner.style.lineHeight = page.style.lineHeight || '1.6';
-      inner.style.top = (-i * hPx) + 'px';
-      inner.innerHTML = page.innerHTML;
+      inner.className = 'doc-content preview-sheet-inner';
+      inner.style.width = contentW + 'px';
+      inner.style.lineHeight = lineHeight;
+      inner.style.top = (-start) + 'px';
+      inner.innerHTML = normalizedHTML;
 
-      sheet.appendChild(inner);
+      win.appendChild(inner);
+      scaler.appendChild(win);
+      sheet.appendChild(scaler);
       previewBody.appendChild(sheet);
     }
   }
 
+  // ---------- Penanda batas halaman di editor ----------
+  const pbLayer = document.createElement('div');
+  pbLayer.id = 'pbLayer';
+  document.getElementById('pageCell').appendChild(pbLayer);
+  var pbTimer = null;
+
+  function updatePageBreaks(){
+    const dims = getPaperDims();
+    const wPx = Math.round(dims.w * MM_TO_PX);
+    const hPx = Math.round(dims.h * MM_TO_PX);
+    const marginPx = Math.round(MARGIN_MM * MM_TO_PX);
+    const contentW = wPx - 2 * marginPx;
+    const contentH = hPx - 2 * marginPx;
+
+    const measurer = document.createElement('div');
+    measurer.className = 'doc-content';
+    measurer.style.cssText = 'position:absolute; visibility:hidden; pointer-events:none; top:-99999px; left:-99999px;' +
+      'width:' + contentW + 'px; line-height:' + (page.style.lineHeight || '1.6') + ';';
+    measurer.innerHTML = page.innerHTML;
+    wrapLooseNodes(measurer);
+    document.body.appendChild(measurer);
+    const starts = computePageBreaks(measurer, contentH);
+    document.body.removeChild(measurer);
+
+    pbLayer.innerHTML = '';
+    for(let i = 1; i < starts.length; i++){
+      const line = document.createElement('div');
+      line.className = 'pb-line';
+      line.style.top = (marginPx + starts[i] - 6) + 'px';
+      const tag = document.createElement('span');
+      tag.textContent = 'Halaman ' + (i + 1);
+      line.appendChild(tag);
+      pbLayer.appendChild(line);
+    }
+    // Lembar editor minimal setinggi semua halaman
+    page.style.minHeight = Math.max(hPx, starts.length * hPx) + 'px';
+  }
+  function schedulePageBreaks(){
+    clearTimeout(pbTimer);
+    pbTimer = setTimeout(updatePageBreaks, 250);
+  }
+
   function openPreview(){
-    buildPreview();
+    // Buka dulu agar lebar layar bisa diukur, baru susun halaman
     previewOverlay.classList.add('open');
+    buildPreview();
   }
   function closePreview(){
     previewOverlay.classList.remove('open');
@@ -834,33 +1078,38 @@
     window.print();
   });
   document.getElementById('insertHrBtn').addEventListener('click', ()=>{
-    page.focus();
-    document.execCommand('insertHorizontalRule', false, null);
-    markDirty();
+    runCommand('insertHorizontalRule');
   });
   document.getElementById('insertLinkBtn').addEventListener('click', ()=>{
-    const url = prompt('Masukkan URL tautan:');
-    if(url){
-      page.focus();
-      document.execCommand('createLink', false, url);
-      markDirty();
+    saveSelection();
+    let url = prompt('Masukkan URL tautan (http, https, mailto, atau tel):');
+    if(!url) return;
+    url = url.trim();
+    if(!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url;
+    if(!/^(https?|mailto|tel):/i.test(url)){
+      toast('Jenis tautan tidak didukung');
+      return;
     }
+    runCommand('createLink', url);
   });
   document.getElementById('insertTableBtn').addEventListener('click', ()=>{
-    const rows = parseInt(prompt('Jumlah baris:', '2')) || 2;
-    const cols = parseInt(prompt('Jumlah kolom:', '2')) || 2;
+    saveSelection();
+    const rowsInput = prompt('Jumlah baris:', '2');
+    if(rowsInput === null) return;
+    const colsInput = prompt('Jumlah kolom:', '2');
+    if(colsInput === null) return;
+    const rows = Math.min(50, Math.max(1, parseInt(rowsInput, 10) || 2));
+    const cols = Math.min(10, Math.max(1, parseInt(colsInput, 10) || 2));
     let html = '<table style="border-collapse:collapse;width:100%;margin:8px 0;">';
-    for(let r=0;r<rows;r++){
+    for(let r = 0; r < rows; r++){
       html += '<tr>';
-      for(let c=0;c<cols;c++){
+      for(let c = 0; c < cols; c++){
         html += '<td style="border:1px solid #999;padding:6px;min-width:40px;">&nbsp;</td>';
       }
       html += '</tr>';
     }
     html += '</table><p><br></p>';
-    page.focus();
-    document.execCommand('insertHTML', false, html);
-    markDirty();
+    runCommand('insertHTML', html);
   });
 
   function refreshActiveStates(){
@@ -871,9 +1120,36 @@
       }catch(e){}
     });
   }
-  page.addEventListener('keyup', refreshActiveStates);
-  page.addEventListener('mouseup', refreshActiveStates);
-  page.addEventListener('input', ()=>{ updateWordCount(); markDirty(); });
+  // Satu pendengar untuk menyimpan seleksi dan memperbarui status tombol (andal di layar sentuh)
+  let selectionTick = false;
+  document.addEventListener('selectionchange', ()=>{
+    if(!selectionInPage()) return;
+    saveSelection();
+    if(selectionTick) return;
+    selectionTick = true;
+    requestAnimationFrame(()=>{
+      selectionTick = false;
+      refreshActiveStates();
+    });
+  });
+  page.addEventListener('focus', ensureParagraph);
+  page.addEventListener('input', ()=>{
+    ensureParagraph();
+    scheduleWordCount();
+    schedulePageBreaks();
+    markDirty();
+    scheduleAutoSave();
+  });
+  // Tempel: bersihkan HTML dari sumber luar sebelum masuk ke dokumen
+  page.addEventListener('paste', e=>{
+    const cd = e.clipboardData;
+    if(!cd) return;
+    const html = cd.getData('text/html');
+    if(html){
+      e.preventDefault();
+      document.execCommand('insertHTML', false, sanitizeHTML(html));
+    }
+  });
 
   // ---------- Ribbon tabs ----------
   const tabs = document.querySelectorAll('.ribbon-tab');
@@ -899,11 +1175,15 @@
     fileMenu.classList.remove('open');
     if(dirty && !confirm('Dokumen belum disimpan. Buat dokumen baru dan buang perubahan?')) return;
     page.innerHTML = '';
+    savedRange = null;
+    ensureParagraph();
     docTitle.value = 'Dokumen Tanpa Judul';
     currentFileName = 'dokumen-tanpa-judul.doc';
     dirty = false;
     saveStatus.textContent = 'Belum disimpan';
     updateWordCount();
+    schedulePageBreaks();
+    saveBackupNow();
   });
 
   document.getElementById('saveDocItem').addEventListener('click', ()=>{ fileMenu.classList.remove('open'); saveDocument(); });
@@ -947,12 +1227,17 @@
   });
 
   function loadContent(content, name){
-    page.innerHTML = content;
-    docTitle.value = name.replace(/\.(doc|html|txt)$/i,'');
+    // .txt adalah teks biasa; format lain diperlakukan sebagai HTML dan dibersihkan dulu
+    page.innerHTML = /\.txt$/i.test(name) ? textToHTML(content) : sanitizeHTML(content);
+    savedRange = null;
+    ensureParagraph();
+    docTitle.value = name.replace(/\.(doc|html|txt)$/i, '');
     currentFileName = name;
     dirty = false;
     saveStatus.textContent = 'Tersimpan';
     updateWordCount();
+    schedulePageBreaks();
+    saveBackupNow();
   }
 
   async function saveDocument(){
@@ -970,6 +1255,22 @@
         toast('Dokumen disimpan: ' + name);
       }catch(err){
         toast('Gagal menyimpan: ' + err.message);
+        return;
+      }
+      // Pilih lokasi/tujuan lewat menu bagikan Android (Files, Drive, dll.)
+      const Share = window.Capacitor.Plugins.Share;
+      if(Share){
+        try{
+          const html = '<html><head><meta charset="utf-8"></head><body>' + content + '</body></html>';
+          const tmp = await window.Capacitor.Plugins.Filesystem.writeFile({
+            path: name, data: html,
+            directory: 'CACHE', encoding: 'utf8'
+          });
+          await Share.share({ title: name, url: tmp.uri, dialogTitle: 'Simpan ke...' });
+        }catch(err){
+          // Menutup menu bagikan dianggap batal, bukan kesalahan
+          if(!/cancel/i.test(String(err && err.message))) toast('Gagal membuka menu simpan: ' + err.message);
+        }
       }
     } else {
       // Browser fallback: local download as .doc (Word-openable HTML)
@@ -993,7 +1294,7 @@
       const names = docs.map(f=> f.name || f);
       const choice = prompt('Buka dokumen:\n' + names.map((n,i)=>(i+1)+'. '+n).join('\n') + '\n\nMasukkan nomor:');
       const idx = parseInt(choice) - 1;
-      if(idx < 0 || idx >= names.length) return;
+      if(!(idx >= 0 && idx < names.length)) return;
       const fileRes = await window.Capacitor.Plugins.Filesystem.readFile({
         path: names[idx], directory: 'DOCUMENTS', encoding: 'utf8'
       });
@@ -1013,34 +1314,85 @@
     setTimeout(()=>URL.revokeObjectURL(url), 2000);
   }
 
-  docTitle.addEventListener('input', markDirty);
+  docTitle.addEventListener('input', ()=>{ markDirty(); scheduleAutoSave(); });
 
   // ---------- Auto-save to localStorage as backup ----------
   const AUTOSAVE_KEY = 'wordapp_autosave';
+  let autoSaveTimer = null;
+  let autoSavePending = false;
+  let autoSaveWarned = false;
+
   function autoSave(){
+    autoSavePending = false;
     try{
       localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
         title: docTitle.value,
         content: page.innerHTML,
+        paper: currentPaper,
+        orientation: currentOrientation,
+        lineHeight: page.style.lineHeight || '',
         ts: Date.now()
       }));
-    }catch(e){}
+    }catch(e){
+      if(!autoSaveWarned){
+        autoSaveWarned = true;
+        toast('Cadangan otomatis gagal (penyimpanan penuh)');
+      }
+    }
   }
-  setInterval(autoSave, 15000);
+  // Simpan hanya setelah ada perubahan, tunggu jeda mengetik
+  function scheduleAutoSave(){
+    autoSavePending = true;
+    clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(autoSave, 1500);
+  }
+  function flushAutoSave(){
+    clearTimeout(autoSaveTimer);
+    if(autoSavePending) autoSave();
+  }
+  function saveBackupNow(){
+    autoSavePending = true;
+    flushAutoSave();
+  }
+  // Aplikasi dipindah ke latar belakang atau ditutup: simpan segera
+  document.addEventListener('visibilitychange', ()=>{ if(document.hidden) flushAutoSave(); });
+  window.addEventListener('pagehide', flushAutoSave);
+
+  function setSelectValue(id, value){
+    const sel = document.getElementById(id);
+    if(Array.from(sel.options).some(o => o.value === String(value))) sel.value = String(value);
+  }
+
+  // Spasi baris bawaan mengikuti pilihan di menu (sebelumnya menu 1.15 tapi halaman 1.6)
+  page.style.lineHeight = document.getElementById('lineSpacing').value;
 
   function restoreAutoSave(){
     try{
       const raw = localStorage.getItem(AUTOSAVE_KEY);
       if(!raw) return;
       const data = JSON.parse(raw);
+      if(data.paper && PAPERS[data.paper]){
+        currentPaper = data.paper;
+        setSelectValue('paperSize', currentPaper);
+      }
+      if(data.orientation === 'landscape' || data.orientation === 'portrait'){
+        currentOrientation = data.orientation;
+        setSelectValue('orientation', currentOrientation);
+      }
+      applyPaperSize();
+      if(data.lineHeight){
+        page.style.lineHeight = data.lineHeight;
+        setSelectValue('lineSpacing', data.lineHeight);
+      }
       if(data.content && data.content.trim()){
-        page.innerHTML = data.content;
+        page.innerHTML = sanitizeHTML(data.content);
         docTitle.value = data.title || docTitle.value;
-        updateWordCount();
       }
     }catch(e){}
   }
   restoreAutoSave();
+  ensureParagraph();
+  updateWordCount();
 
   // Prevent accidental navigation loss
   window.addEventListener('beforeunload', (e)=>{
@@ -1108,6 +1460,7 @@
   }, {passive:false});
 
   updateWordCount();
+  schedulePageBreaks();
 })();
 </script>
 </body>
