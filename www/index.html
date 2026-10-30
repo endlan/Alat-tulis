@@ -139,7 +139,7 @@
     flex:1;
     overflow-x:auto;
     overflow-y:auto;
-    padding:0 10px 60px;
+    padding:0 10px;
     -webkit-overflow-scrolling:touch;
     touch-action:pan-x pan-y;
   }
@@ -157,7 +157,7 @@
   #docGrid{
     display:grid;
     grid-template-columns:22px max-content;
-    grid-template-rows:22px max-content;
+    grid-template-rows:22px max-content 60px;
   }
   #cornerBox{
     grid-column:1; grid-row:1;
@@ -178,11 +178,14 @@
     box-shadow:0 1px 2px rgba(0,0,0,0.06);
   }
   #vRulerWrap{
-    grid-column:1; grid-row:2;
+    grid-column:1; grid-row:2 / span 2;
+    align-self:start;
     position:sticky;
     left:0;
+    top:22px;
     z-index:5;
     width:22px;
+    overflow:hidden;
     background:#fbfbfb;
     border-right:1px solid #d4d4d4;
     box-shadow:1px 0 2px rgba(0,0,0,0.06);
@@ -194,21 +197,26 @@
   /* Penanda batas halaman di editor (tidak ikut tersimpan/tercetak) */
   #pbLayer{
     position:absolute; top:0; left:0; right:0; bottom:0;
-    pointer-events:none; z-index:5; overflow:hidden;
+    pointer-events:none; z-index:1; /* di bawah penggaris (z-index 5) saat digeser/zoom */
   }
-  .pb-line{
-    position:absolute; left:0; right:0; height:0;
-    border-top:2px dashed #4a90d9;
+  .pb-gap{
+    position:absolute; left:0; right:-12px;
+    background:var(--canvas-bg);
+    box-shadow:inset 0 3px 4px -3px rgba(0,0,0,0.25), inset 0 -3px 4px -3px rgba(0,0,0,0.25);
   }
-  .pb-line span{
-    position:absolute; right:8px; top:3px;
-    font:600 10px Arial,sans-serif; color:#fff; background:#4a90d9;
-    padding:1px 6px; border-radius:8px;
+  .pb-gap span{
+    position:absolute; right:14px; top:50%; transform:translateY(-50%);
+    font:600 10px Arial,sans-serif; color:#666;
   }
+  #page [data-pgm]{padding-top:var(--pgm);}
+  .pgsp{display:inline-block; width:0; vertical-align:bottom; pointer-events:none;}
   .ruler-margin{
     position:absolute;
     top:0; bottom:0;
     background:#d9d9d9;
+  }
+  #vRulerInner{
+    position:absolute; left:0; right:0; top:0;
   }
   .ruler-margin-v{
     position:absolute;
@@ -223,6 +231,7 @@
   }
   .ruler-tick.major{height:9px; background:#777;}
   .ruler-tick.minor{height:5px;}
+  .ruler-gap-v{position:absolute; left:0; right:0; background:var(--canvas-bg);}
   .ruler-tick-v{
     position:absolute;
     right:0;
@@ -531,7 +540,7 @@
         <div id="docGrid">
           <div id="cornerBox"></div>
           <div id="rulerWrap"></div>
-          <div id="vRulerWrap"></div>
+          <div id="vRulerWrap"><div id="vRulerInner"></div></div>
           <div id="pageCell">
             <div id="page" contenteditable="true" data-placeholder="Mulai menulis di sini..." spellcheck="true"></div>
           </div>
@@ -589,6 +598,8 @@
   // ---------- Paper size ----------
   const MM_TO_PX = 96 / 25.4;
   const MARGIN_MM = 25;
+  const PAGE_GAP = 24;
+  let rulerPages = 1;
   const PAPERS = {
     A4:     { w: 210,   h: 297   },
     Letter: { w: 215.9, h: 279.4 },
@@ -679,48 +690,50 @@
   }
 
   function buildVRuler(hPx, marginPx){
-    const vRulerWrap = document.getElementById('vRulerWrap');
-    vRulerWrap.style.height = hPx + 'px';
+    const vRulerWrap = document.getElementById('vRulerInner');
+    const pages = 1; // satu penggaris diam, skala satu halaman
+    vRulerWrap.style.height = (pages * hPx + (pages - 1) * PAGE_GAP) + 'px';
     vRulerWrap.innerHTML = '';
-
-    const topMargin = document.createElement('div');
-    topMargin.className = 'ruler-margin-v';
-    topMargin.style.top = '0';
-    topMargin.style.height = marginPx + 'px';
-    vRulerWrap.appendChild(topMargin);
-
-    const bottomMargin = document.createElement('div');
-    bottomMargin.className = 'ruler-margin-v';
-    bottomMargin.style.bottom = '0';
-    bottomMargin.style.height = marginPx + 'px';
-    vRulerWrap.appendChild(bottomMargin);
-
+    const add = (cls, prop, val, extra)=>{
+      const d = document.createElement('div');
+      d.className = cls; d.style[prop] = val + 'px';
+      if(extra) Object.assign(d.style, extra);
+      vRulerWrap.appendChild(d); return d;
+    };
     const startCm = -Math.floor(marginPx / PX_PER_CM) - 1;
     const endCm = Math.ceil((hPx - marginPx) / PX_PER_CM) + 1;
-    for(let cm = startCm; cm <= endCm; cm++){
-      const y = marginPx + cm * PX_PER_CM;
-      if(y < 0 || y > hPx) continue;
-
-      const major = document.createElement('div');
-      major.className = 'ruler-tick-v major';
-      major.style.top = y + 'px';
-      vRulerWrap.appendChild(major);
-
-      if(cm !== 0){
-        const num = document.createElement('div');
-        num.className = 'ruler-num-v';
-        num.style.top = y + 'px';
-        num.textContent = Math.abs(cm);
-        vRulerWrap.appendChild(num);
-      }
-
-      if(cm < endCm){
-        const half = document.createElement('div');
-        half.className = 'ruler-tick-v minor';
-        half.style.top = (y + PX_PER_CM/2) + 'px';
-        vRulerWrap.appendChild(half);
+    for(let k = 0; k < pages; k++){
+      const off = k * (hPx + PAGE_GAP);
+      add('ruler-margin-v', 'top', off, {height: marginPx + 'px'});
+      add('ruler-margin-v', 'top', off + hPx - marginPx, {height: marginPx + 'px'});
+      if(k < pages - 1) add('ruler-gap-v', 'top', off + hPx, {height: PAGE_GAP + 'px'});
+      for(let cm = startCm; cm <= endCm; cm++){
+        const y = marginPx + cm * PX_PER_CM;
+        if(y < 0 || y > hPx) continue;
+        add('ruler-tick-v major', 'top', off + y);
+        if(cm !== 0){
+          const num = add('ruler-num-v', 'top', off + y);
+          num.textContent = Math.abs(cm);
+        }
+        if(cm < endCm && y + PX_PER_CM / 2 <= hPx) add('ruler-tick-v minor', 'top', off + y + PX_PER_CM / 2);
       }
     }
+    syncVRuler();
+  }
+
+  // Penggaris samping: satu kotak tetap di layar (sticky), isinya digeser
+  // mengikuti posisi gulir supaya skala selalu sejajar dengan kertas.
+  var curZoom = 1;
+  function syncVRuler(){
+    const wrap = document.getElementById('vRulerWrap');
+    const inner = document.getElementById('vRulerInner');
+    const cw = document.getElementById('canvasWrap');
+    if(!wrap || !inner || !cw) return;
+    const z = curZoom || 1;
+    // tinggi kotak = tinggi area gulir dikurangi penggaris atas (satuan CSS di dalam zoom)
+    wrap.style.height = Math.max(0, cw.clientHeight / z - 22) + 'px';
+    // skala tidak ikut bergeser saat menggulir: hanya kertas yang bergulir
+    inner.style.top = '0px';
   }
 
   function toast(msg){
@@ -966,7 +979,7 @@
     measurer.className = 'doc-content';
     measurer.style.cssText = 'position:absolute; visibility:hidden; pointer-events:none; top:-99999px; left:-99999px;' +
       'width:' + contentW + 'px; line-height:' + lineHeight + ';';
-    measurer.innerHTML = page.innerHTML;
+    measurer.innerHTML = docHTML();
     wrapLooseNodes(measurer);
     document.body.appendChild(measurer);
     const starts = computePageBreaks(measurer, contentH);
@@ -1023,36 +1036,129 @@
   document.getElementById('pageCell').appendChild(pbLayer);
   var pbTimer = null;
 
+  const LEAF = /^(P|DIV|H[1-6]|LI|BLOCKQUOTE|PRE)$/;
+
+  function stripMarks(root){
+    root.querySelectorAll('.pgsp').forEach(sp=>{ const p = sp.parentNode; sp.remove(); if(p === page) p.normalize(); else p.normalize(); });
+    root.querySelectorAll('[data-pgm]').forEach(e=>{
+      e.removeAttribute('data-pgm'); e.style.removeProperty('--pgm');
+      if(!e.getAttribute('style')) e.removeAttribute('style');
+    });
+  }
+  function docHTML(){
+    const c = page.cloneNode(true);
+    c.querySelectorAll('.pgsp').forEach(sp=>sp.remove());
+    c.querySelectorAll('[data-pgm]').forEach(e=>{
+      e.removeAttribute('data-pgm'); e.style.removeProperty('--pgm');
+      if(!e.getAttribute('style')) e.removeAttribute('style');
+    });
+    return c.innerHTML;
+  }
+
+  function collectBlocks(parent, out){
+    Array.from(parent.children).forEach(el=>{
+      if(el.classList.contains('pgsp')) return;
+      if(/^(UL|OL|BLOCKQUOTE|DIV|LI)$/.test(el.tagName) && el.querySelector('p,div,li,h1,h2,h3,h4,h5,h6,table')) collectBlocks(el, out);
+      else out.push(el);
+    });
+    return out;
+  }
+
+  // Indeks karakter pertama di dalam el yang bagian bawahnya melewati batas (koordinat layar)
+  function firstCharBelow(el, limitY){
+    const tw = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const rg = document.createRange();
+    const bottomAt = (n,i)=>{ rg.setStart(n,i); rg.setEnd(n,i+1); const r = rg.getBoundingClientRect(); return r.height ? r.bottom : -1; };
+    let n;
+    while((n = tw.nextNode())){
+      const len = n.nodeValue.length;
+      if(!len) continue;
+      let lo = 0, hi = len; // cari indeks terkecil dengan bottom > limit
+      while(lo < hi){
+        const mid = (lo + hi) >> 1;
+        let k = mid, v = bottomAt(n,k);
+        while(v < 0 && k < len - 1){ k++; v = bottomAt(n,k); }
+        if(v > limitY) hi = mid; else lo = mid + 1;
+      }
+      if(lo < len && bottomAt(n, lo) > limitY) return {node:n, index:lo};
+    }
+    return null;
+  }
+
   function updatePageBreaks(){
     const dims = getPaperDims();
     const wPx = Math.round(dims.w * MM_TO_PX);
     const hPx = Math.round(dims.h * MM_TO_PX);
     const marginPx = Math.round(MARGIN_MM * MM_TO_PX);
-    const contentW = wPx - 2 * marginPx;
     const contentH = hPx - 2 * marginPx;
+    const dead = 2 * marginPx + PAGE_GAP;   // margin bawah + celah + margin atas
+    const pitch = contentH + dead;
 
-    const measurer = document.createElement('div');
-    measurer.className = 'doc-content';
-    measurer.style.cssText = 'position:absolute; visibility:hidden; pointer-events:none; top:-99999px; left:-99999px;' +
-      'width:' + contentW + 'px; line-height:' + (page.style.lineHeight || '1.6') + ';';
-    measurer.innerHTML = page.innerHTML;
-    wrapLooseNodes(measurer);
-    document.body.appendChild(measurer);
-    const starts = computePageBreaks(measurer, contentH);
-    document.body.removeChild(measurer);
+    const z = zoomStage.style.zoom, sl = canvasWrap.scrollLeft, st = canvasWrap.scrollTop;
+    zoomStage.style.zoom = 1; // ukur pada skala 1:1
+    stripMarks(page);
+    page.style.minHeight = '0px';
 
+    const origin = page.getBoundingClientRect().top + marginPx;
+    const rel = y => y - origin;
+    let limit = contentH, guard = 0;
+
+    collectBlocks(page, []).forEach(el=>{
+      const leaf = LEAF.test(el.tagName);
+      for(;;){
+        if(++guard > 3000) return;
+        const r = el.getBoundingClientRect();
+        const top = rel(r.top), bottom = rel(r.bottom);
+        if(top >= limit + dead - 1){ limit += pitch; continue; }
+        const push = ()=>{
+          const cur = parseFloat(el.style.getPropertyValue('--pgm')) || 0;
+          el.setAttribute('data-pgm', '1');
+          el.style.setProperty('--pgm', (cur + limit + dead - top) + 'px');
+        };
+        if(top >= limit){ push(); limit += pitch; continue; }
+        if(bottom <= limit + 0.5) break;
+        // blok melewati batas halaman
+        const pageTop = limit - contentH;
+        const firstOnPage = top <= pageTop + 1;
+        if(!leaf){ if(firstOnPage) break; push(); limit += pitch; continue; }
+        const hit = firstCharBelow(el, origin + limit);
+        if(!hit){ if(firstOnPage) break; push(); limit += pitch; continue; }
+        const rg = document.createRange();
+        rg.setStart(hit.node, hit.index); rg.setEnd(hit.node, Math.min(hit.node.nodeValue.length, hit.index + 1));
+        const cr = rg.getBoundingClientRect();
+        const lh = parseFloat(getComputedStyle(el).lineHeight) || cr.height * 1.6;
+        if(rel(cr.top) - top < lh * 0.9){ // baris pertama blok: pindahkan seluruh blok
+          if(firstOnPage) break;
+          push(); limit += pitch; continue;
+        }
+        // baris di tengah paragraf: sisipkan spacer agar baris itu turun ke halaman berikutnya
+        const sp = document.createElement('span');
+        sp.className = 'pgsp';
+        sp.setAttribute('contenteditable', 'false');
+        sp.style.height = Math.max(lh, lh + (limit + dead - rel(cr.top))) + 'px';
+        rg.collapse(true);
+        rg.insertNode(sp);
+        limit += pitch;
+      }
+    });
+
+    const pages = Math.max(1, Math.round((limit - contentH) / pitch) + 1);
     pbLayer.innerHTML = '';
-    for(let i = 1; i < starts.length; i++){
-      const line = document.createElement('div');
-      line.className = 'pb-line';
-      line.style.top = (marginPx + starts[i] - 6) + 'px';
+    for(let k = 1; k < pages; k++){
+      const gap = document.createElement('div');
+      gap.className = 'pb-gap';
+      gap.style.top = (k * hPx + (k - 1) * PAGE_GAP) + 'px';
+      gap.style.height = PAGE_GAP + 'px';
       const tag = document.createElement('span');
-      tag.textContent = 'Halaman ' + (i + 1);
-      line.appendChild(tag);
-      pbLayer.appendChild(line);
+      tag.textContent = 'Halaman ' + (k + 1);
+      gap.appendChild(tag);
+      pbLayer.appendChild(gap);
     }
-    // Lembar editor minimal setinggi semua halaman
-    page.style.minHeight = Math.max(hPx, starts.length * hPx) + 'px';
+    page.style.minHeight = (pages * hPx + (pages - 1) * PAGE_GAP) + 'px';
+    rulerPages = pages;
+    zoomStage.style.zoom = z;
+    canvasWrap.scrollLeft = sl; canvasWrap.scrollTop = st;
+    syncVRuler();
   }
   function schedulePageBreaks(){
     clearTimeout(pbTimer);
@@ -1243,7 +1349,7 @@
   async function saveDocument(){
     const name = (docTitle.value || 'dokumen').trim().replace(/[\\/:*?"<>|]/g,'_') + '.doc';
     currentFileName = name;
-    const content = page.innerHTML;
+    const content = docHTML();
     if(isCapacitor()){
       try{
         await window.Capacitor.Plugins.Filesystem.writeFile({
@@ -1327,7 +1433,7 @@
     try{
       localStorage.setItem(AUTOSAVE_KEY, JSON.stringify({
         title: docTitle.value,
-        content: page.innerHTML,
+        content: docHTML(),
         paper: currentPaper,
         orientation: currentOrientation,
         lineHeight: page.style.lineHeight || '',
@@ -1412,12 +1518,14 @@
     let ratio = 1;
     if(zoom) ratio = z / zoom;
     zoom = z;
+    curZoom = z;
     zoomStage.style.zoom = zoom; // Chromium/Android WebView: real layout rescale
     zoomLevelEl.textContent = Math.round(zoom * 100) + '%';
     if(focus && ratio !== 1){
       canvasWrap.scrollLeft = (canvasWrap.scrollLeft + focus.x) * ratio - focus.x;
       canvasWrap.scrollTop = (canvasWrap.scrollTop + focus.y) * ratio - focus.y;
     }
+    syncVRuler();
   }
 
   document.getElementById('zoomInBtn').addEventListener('click', ()=> applyZoom(zoom + 0.1));
@@ -1459,6 +1567,16 @@
     }
   }, {passive:false});
 
+  // Sinkronkan penggaris samping saat menggulir / ukuran layar berubah
+  let vrTick = false;
+  canvasWrap.addEventListener('scroll', ()=>{
+    if(vrTick) return;
+    vrTick = true;
+    requestAnimationFrame(()=>{ vrTick = false; syncVRuler(); });
+  }, {passive:true});
+  window.addEventListener('resize', syncVRuler);
+
+  syncVRuler();
   updateWordCount();
   schedulePageBreaks();
 })();
